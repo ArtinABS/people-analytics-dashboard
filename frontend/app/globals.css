@@ -170,6 +170,11 @@ body {
   color: inherit;
 }
 
+.workspace-symbol .avatar__image {
+  object-fit: contain;
+  padding: 0.2rem;
+}
+
 .sidebar-toggle {
   flex: 0 0 2.75rem;
   width: 2.75rem;

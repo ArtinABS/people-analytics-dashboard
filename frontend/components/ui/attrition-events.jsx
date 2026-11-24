@@ -1,15 +1,16 @@
 "use client";
 
-import { Alert, Button, Label, ListBox, Select, Skeleton, Table, ToggleButton, Typography } from "@heroui/react";
+import { Button, Label, ListBox, Select, Table, ToggleButton, Typography } from "@heroui/react";
 import { parseDate } from "@internationalized/date";
 import { useEffect, useId, useState } from "react";
-import { fetchEmployeeJson } from "../../app/employee-request";
+import { useWorksheetQuery, worksheetPath } from "../../app/worksheet-query";
 import { Charts } from "./charts";
 import { CopyAnalysisKeys } from "./copy-analysis-keys";
 import { DateRangeFilter } from "./date-range-filter";
 import { DonutChart } from "./donut-chart";
+import { WorksheetFeedback } from "./worksheet-feedback";
 
-const ATTRITION_URL = "/attrition-events";
+const ATTRITION_URL = "/attrition-events/summary";
 const CATEGORY_COLORS = [
   "var(--accent)", "var(--indigo)", "var(--attrition-teal)", "var(--attrition-orange)",
   "var(--attrition-plum)", "var(--attrition-blue)", "var(--attrition-olive)",
@@ -17,15 +18,6 @@ const CATEGORY_COLORS = [
 ];
 const FLAG_OPTIONS = [["any", "Any"], ["yes", "Yes"], ["no", "No"]];
 const percentFormat = new Intl.NumberFormat("en", { style: "percent", maximumFractionDigits: 1 });
-
-function countBy(events, field) {
-  const counts = new Map();
-  for (const event of events) {
-    const label = event[field];
-    counts.set(label, (counts.get(label) ?? 0) + 1);
-  }
-  return counts;
-}
 
 function toggleCategory(selection, label) {
   const next = new Set(selection);
@@ -37,229 +29,147 @@ function share(count, total) {
   return total > 0 ? count / total : 0;
 }
 
-function useAttritionRequest(request) {
-  const [result, setResult] = useState(null);
-
-  useEffect(() => {
-    if (request === null) return;
-    const controller = new AbortController();
-    fetchEmployeeJson(request.path, controller.signal)
-      .then((events) => {
-        if (!controller.signal.aborted) setResult({ request, events });
-      })
-      .catch((error) => {
-        if (!controller.signal.aborted) setResult({ request, error: error.message });
-      });
-    return () => controller.abort();
-  }, [request]);
-
-  return result?.request === request ? result : null;
-}
-
-function AttritionFeedback({ result, onRetry, loadingLabel }) {
-  if (result === null) {
-    return (
-      <div className="loading-lines monthly-loading" role="status" aria-label={loadingLabel}>
-        <Skeleton /><Skeleton /><Skeleton />
-      </div>
-    );
-  }
-
-  return (
-    <Alert status="danger" className="search-alert">
-      <Alert.Indicator />
-      <Alert.Content>
-        <Alert.Description>Could not load attrition events. {result.error}</Alert.Description>
-        <Button size="sm" variant="secondary" onPress={onRetry}>Retry</Button>
-      </Alert.Content>
-    </Alert>
-  );
-}
-
 export function AttritionEvents() {
-  const [request, setRequest] = useState({ path: ATTRITION_URL });
-  const result = useAttritionRequest(request);
-
-  if (!result?.events) {
-    return (
-      <AttritionFeedback
-        result={result}
-        loadingLabel="Loading attrition events"
-        onRetry={() => setRequest({ path: ATTRITION_URL })}
-      />
-    );
-  }
-  if (!result.events.length) {
-    return <Typography.Paragraph className="search-hint">The workbook has no attrition events.</Typography.Paragraph>;
-  }
-  return <AttritionOverview events={result.events} />;
-}
-
-function attritionPath(range) {
-  if (!range) return ATTRITION_URL;
-  const params = new URLSearchParams({
-    exit_date_from: range.start.toString(),
-    exit_date_to: range.end.toString(),
-  });
-  return `${ATTRITION_URL}?${params}`;
-}
-
-function AttritionOverview({ events }) {
-  const firstDate = events.at(-1).exit_date;
-  const lastDate = events[0].exit_date;
-  const [range, setRange] = useState(() => ({ start: parseDate(firstDate), end: parseDate(lastDate) }));
-  const [rangeRequest, setRangeRequest] = useState(null);
+  const [initial, setInitial] = useState(null);
+  const [range, setRange] = useState();
   const [reasons, setReasons] = useState(() => new Set());
   const [types, setTypes] = useState(() => new Set());
   const [rehire, setRehire] = useState("any");
   const [interview, setInterview] = useState("any");
 
-  const rangeResult = useAttritionRequest(rangeRequest);
-  const result = rangeRequest === null ? { events } : rangeResult;
-  const dateEvents = result?.events ?? [];
-  const reasonCounts = countBy(dateEvents, "exit_reason");
-  const typeCounts = countBy(dateEvents, "exit_type");
-  const rehireCounts = countBy(dateEvents, "eligible_for_rehire");
-  const interviewCounts = countBy(dateEvents, "exit_interview_completed");
-  const originalReasons = [...countBy(events, "exit_reason")]
+  const result = useWorksheetQuery(worksheetPath(ATTRITION_URL, {
+    exit_date_from: range?.start.toString(),
+    exit_date_to: range?.end.toString(),
+    exit_reason: [...reasons],
+    exit_type: [...types],
+    eligible_for_rehire: rehire === "any" ? null : rehire === "yes",
+    exit_interview_completed: interview === "any" ? null : interview === "yes",
+  }));
+  useEffect(() => {
+    if (initial === null && result.data) setInitial(result.data);
+  }, [initial, result.data]);
+  if (!initial) return <WorksheetFeedback request={result} subject="attrition events" />;
+  if (!initial.total) {
+    return <Typography.Paragraph className="search-hint">The workbook has no attrition events.</Typography.Paragraph>;
+  }
+
+  const fullRange = { start: parseDate(initial.first_date), end: parseDate(initial.last_date) };
+  const selectedRange = range === undefined ? fullRange : range;
+  const { total, reason_counts, type_counts, eligible_for_rehire, exit_interview_completed } = result.latest;
+  const reasonLabels = Object.entries(initial.reason_counts)
     .sort(([labelA, countA], [labelB, countB]) => countB - countA || labelA.localeCompare(labelB))
     .map(([label]) => label);
-  const reasonLabels = new Set([...originalReasons, ...reasonCounts.keys()]);
-  const reasonSegments = [...reasonLabels].map((label, index) => ({
+  const reasonSegments = reasonLabels.map((label, index) => ({
     label,
-    value: reasonCounts.get(label) ?? 0,
+    value: reason_counts[label] ?? 0,
     color: CATEGORY_COLORS[index % CATEGORY_COLORS.length],
   }));
-  const typeLabels = new Set(["Voluntary", "Involuntary", ...events.map(({ exit_type }) => exit_type), ...typeCounts.keys()]);
-  const matchingEvents = dateEvents.filter((event) =>
-    (!reasons.size || reasons.has(event.exit_reason))
-    && (!types.size || types.has(event.exit_type))
-    && (rehire === "any" || event.eligible_for_rehire === (rehire === "yes"))
-    && (interview === "any" || event.exit_interview_completed === (interview === "yes"))
-  );
-
-  function changeRange(value) {
-    const path = attritionPath(value);
-    setRange(value);
-    setRangeRequest((current) => {
-      if (path === (current?.path ?? attritionPath(range))) return current;
-      return { path };
-    });
-  }
+  const typeLabels = new Set(["Voluntary", "Involuntary", ...Object.keys(initial.type_counts)]);
+  const matchingEvents = result.data?.records ?? [];
 
   return (
     <div className="attrition-overview">
       <div className="attrition-date-controls">
-        <DateRangeFilter name="exit_date" label="Exit date range" value={range} onChange={changeRange} />
+        <DateRangeFilter name="exit_date" label="Exit date range" value={selectedRange} onChange={setRange} />
         <Button
           className="attrition-reset"
           variant="outline"
           size="sm"
-          isDisabled={range?.start.toString() === firstDate && range?.end.toString() === lastDate}
-          onPress={() => changeRange({ start: parseDate(firstDate), end: parseDate(lastDate) })}
+          isDisabled={selectedRange?.start.toString() === initial.first_date && selectedRange?.end.toString() === initial.last_date}
+          onPress={() => setRange(undefined)}
         >
           Reset dates
         </Button>
       </div>
 
-      {!result?.events ? (
-        <div className="attrition-range-feedback">
-          <AttritionFeedback
-            result={result}
-            loadingLabel="Loading exits for the selected dates"
-            onRetry={() => setRangeRequest({ path: rangeRequest.path })}
-          />
-        </div>
-      ) : (
-        <>
-          <div className="attrition-charts" aria-describedby="attrition-selection-hint">
-            <ExitReasons
-              data={reasonSegments}
-              total={dateEvents.length}
-              selected={reasons}
-              onToggle={(label) => setReasons((current) => toggleCategory(current, label))}
-            />
-            <div className="attrition-comparisons">
-              <ExitComparison
-                label="Exit types"
-                total={dateEvents.length}
-                options={[...typeLabels].map((label) => ({
-                  label,
-                  count: typeCounts.get(label) ?? 0,
-                  selected: types.has(label),
-                  onToggle: () => setTypes((current) => toggleCategory(current, label)),
-                }))}
-              />
-              <ExitFlagComparison
-                label="Eligible for rehire"
-                counts={rehireCounts}
-                total={dateEvents.length}
-                value={rehire}
-                onChange={setRehire}
-              />
-              <ExitFlagComparison
-                label="Exit interview completed"
-                counts={interviewCounts}
-                total={dateEvents.length}
-                value={interview}
-                onChange={setInterview}
-              />
-            </div>
-          </div>
-          <Typography.Paragraph className="search-hint" id="attrition-selection-hint">
-            Select chart categories to filter the table.
-          </Typography.Paragraph>
+    <div className="attrition-charts" aria-describedby="attrition-selection-hint" aria-busy={result.loading}>
+      <ExitReasons
+        data={reasonSegments}
+        total={total}
+        selected={reasons}
+        onToggle={(label) => setReasons((current) => toggleCategory(current, label))}
+      />
+      <div className="attrition-comparisons">
+        <ExitComparison
+          label="Exit types"
+          total={total}
+          options={[...typeLabels].map((label) => ({
+            label,
+            count: type_counts[label] ?? 0,
+            selected: types.has(label),
+            onToggle: () => setTypes((current) => toggleCategory(current, label)),
+          }))}
+        />
+        <ExitFlagComparison
+          label="Eligible for rehire"
+          yesCount={eligible_for_rehire}
+          total={total}
+          value={rehire}
+          onChange={setRehire}
+        />
+        <ExitFlagComparison
+          label="Exit interview completed"
+          yesCount={exit_interview_completed}
+          total={total}
+          value={interview}
+          onChange={setInterview}
+        />
+      </div>
+    </div>
+    <Typography.Paragraph className="search-hint" id="attrition-selection-hint">
+      Select chart categories to filter the table.
+    </Typography.Paragraph>
 
-          <section className="attrition-results" aria-labelledby="attrition-results-heading">
-            <div className="attrition-results-heading">
-              <Typography.Heading level={2} id="attrition-results-heading">Exit records</Typography.Heading>
-              <Typography.Paragraph className="search-hint" role="status">
-                {matchingEvents.length} of {dateEvents.length} exits
-              </Typography.Paragraph>
-            </div>
-            <div className="attrition-table-filters">
-              <ExitFlagFilter label="Eligible for rehire" value={rehire} onChange={setRehire} />
-              <ExitFlagFilter label="Exit interview completed" value={interview} onChange={setInterview} />
-              <Button
-                className="attrition-reset"
-                variant="outline"
-                size="sm"
-                isDisabled={!reasons.size && !types.size && rehire === "any" && interview === "any"}
-                onPress={() => {
-                  setReasons(new Set());
-                  setTypes(new Set());
-                  setRehire("any");
-                  setInterview("any");
-                }}
-              >
-                Clear table filters
-              </Button>
-            </div>
-            {matchingEvents.length ? (
-              <>
-                <CopyAnalysisKeys rows={matchingEvents} dates={[["exit_date", "Exit date"]]} />
-                <ExitTable events={matchingEvents} />
-              </>
-            ) : (
-              <Typography.Paragraph className="search-hint">
-                {dateEvents.length ? "No exit records match these filters." : "No exits in this date range."}
-              </Typography.Paragraph>
-            )}
-          </section>
+    <section className="attrition-results" aria-labelledby="attrition-results-heading">
+      <div className="attrition-results-heading">
+        <Typography.Heading level={2} id="attrition-results-heading">Exit records</Typography.Heading>
+        {result.data && (
+          <Typography.Paragraph className="search-hint" role="status">
+            {matchingEvents.length} of {total} exits
+          </Typography.Paragraph>
+        )}
+      </div>
+      <div className="attrition-table-filters">
+        <ExitFlagFilter label="Eligible for rehire" value={rehire} onChange={setRehire} />
+        <ExitFlagFilter label="Exit interview completed" value={interview} onChange={setInterview} />
+        <Button
+          className="attrition-reset"
+          variant="outline"
+          size="sm"
+          isDisabled={!reasons.size && !types.size && rehire === "any" && interview === "any"}
+          onPress={() => {
+            setReasons(new Set());
+            setTypes(new Set());
+            setRehire("any");
+            setInterview("any");
+          }}
+        >
+          Clear table filters
+        </Button>
+      </div>
+      {!result.data ? <WorksheetFeedback request={result} subject="exit records" /> : matchingEvents.length ? (
+        <>
+          <CopyAnalysisKeys rows={matchingEvents} dates={[["exit_date", "Exit date"]]} />
+          <ExitTable events={matchingEvents} />
         </>
+      ) : (
+        <Typography.Paragraph className="search-hint">
+          {total ? "No exit records match these filters." : "No exits in this date range."}
+        </Typography.Paragraph>
       )}
+    </section>
     </div>
   );
 }
 
-function ExitFlagComparison({ label, counts, total, value, onChange }) {
+function ExitFlagComparison({ label, yesCount, total, value, onChange }) {
   return (
     <ExitComparison
       label={label}
       total={total}
       options={FLAG_OPTIONS.slice(1).map(([key, label]) => ({
         label,
-        count: counts.get(key === "yes") ?? 0,
+        count: key === "yes" ? yesCount : total - yesCount,
         selected: value === key,
         onToggle: (selected) => onChange(selected ? key : "any"),
       }))}

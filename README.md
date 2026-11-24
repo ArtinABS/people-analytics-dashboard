@@ -4,11 +4,11 @@ A local Next.js and FastAPI dashboard using the `Employees`, `Monthly Employee D
 
 ## Run it locally
 
-Use Python 3.11+ and Node.js 20.9+. Put the supplied `PA Task.xlsx` in a `Given Files` folder beside this repo. In the original interview workspace, the workbook is already in that location. Open this repository folder in VS Code and press **Ctrl+Shift+B**. The task opens three named terminals.
+Use Python 3.11+ and Node.js 20.9+. Open this repository folder in VS Code and press **Ctrl+Shift+B**. The task opens three named terminals. To load the supplied `PA Task.xlsx` automatically on first start, put it in a `Given Files` folder beside this repo. You can also load it from the dashboard.
 
-- **Database** prepares the Python environment, imports the supplied workbook into SQLite, and keeps the import log visible.
-- **Backend** starts FastAPI on port 8000 after the import finishes.
-- **Frontend** installs Node dependencies when needed and starts Next.js on port 3000 after the import finishes.
+- **Database** prepares the Python environment and uses the existing SQLite database, or imports the supplied workbook on first run if present.
+- **Backend** starts FastAPI on port 8000 after database setup.
+- **Frontend** installs Node dependencies when needed and starts Next.js on port 3000 after setup.
 
 Open [the dashboard](http://127.0.0.1:3000) when both servers are ready. If a dashboard server is already running, its task reports the address. Use **Tasks: Terminate Task** to stop servers launched by VS Code.
 
@@ -35,6 +35,12 @@ npm.cmd run dev
 
 Open [the dashboard](http://127.0.0.1:3000). Use port 3000 for the dashboard and port 8000 for the API. FastAPI's [interactive documentation](http://127.0.0.1:8000/docs) lets you try the endpoint directly.
 
+## Import a workbook in the dashboard
+
+Choose **Import Excel** under **Dashboard tools**, select an `.xlsx` file, and click **Import workbook**. Use the same six data worksheets and column names as `PA Task.xlsx`. The import accepts files up to 20 MB.
+
+The browser sends the workbook to `POST /imports/workbook` as a multipart form field named `file`. FastAPI calls the Python importer, which replaces all worksheet tables in one SQLite transaction. A successful response contains the filename and employee count. Re-importing the same workbook produces the same rows. If an import fails, the existing data is preserved. The dashboard reloads its data after success, and the imported data persists across restarts.
+
 ## Follow one request
 
 1. `import_employees.py` reads the workbook's `Employees` sheet with openpyxl. It saves the roster and latest import details in the same SQLite transaction. The supplied workbook has 360 records.
@@ -42,7 +48,7 @@ Open [the dashboard](http://127.0.0.1:3000). Use port 3000 for the dashboard and
 3. FastAPI reads the matching SQLite rows and returns JSON with `total`, `departments`, and `employees`. The Sales filter returns 103 records.
 4. Open the floating **DevTools** panel from any worksheet. It shows the last 12 requests made during the current page session, including their URLs, HTTP statuses, and timings. On Overview, **Run search again** repeats the current search.
 
-The browser sees ports 3000 and 8000 as different origins. FastAPI's CORS setting allows the dashboard's local origin to make read requests.
+The browser sees ports 3000 and 8000 as different origins. FastAPI's CORS setting allows the dashboard's local origin to make API requests.
 
 The search supports all nine worksheet columns. Combined filters must all match. Employee ID accepts a prefix and tenure matches an exact value. Hire date and date of birth use inclusive start and end dates. Fill either date to search with just that bound. The query parameters are `hire_date_from`, `hire_date_to`, `date_of_birth_from`, and `date_of_birth_to`. Each takes an ISO date.
 
@@ -50,7 +56,7 @@ The search supports all nine worksheet columns. Combined filters must all match.
 
 ## Monthly Employee Data
 
-The workbook import also stores monthly records in SQLite, keyed by employee ID and month. The Employee-first tab loads available choices from `GET /monthly-employees/options` and the selected employee's history from `GET /monthly-employees/{employee_id}`. It starts on the latest workbook month and the lowest employee ID with a record in that month.
+The workbook import stores monthly records in SQLite, keyed by employee ID and month. The Employee-first tab loads available choices from `GET /monthly-employees/options`. Changing the employee or months sends `GET /monthly-employees/{employee_id}/selection` with a repeated `month` parameter. The API returns the selected snapshots and the employee's latest record for the summary. The view starts on the latest workbook month and the lowest employee ID with a record in that month.
 
 The summary below the filters shows department, manager ID, and tenure from the employee's latest available record. The latest promotion month and year come from subtracting the promotion offset in that record from its month. Selecting other months for comparison keeps the summary on the latest record.
 
@@ -58,25 +64,21 @@ Select one or more months. When comparing months, hover over a chart point to se
 
 ## Attrition Events
 
-The dashboard loads the full worksheet with `GET /attrition-events` on open. Changing the exit-date range sends `exit_date_from` and `exit_date_to` as ISO dates. SQLite applies both bounds inclusively. The returned records set the denominator for the exit-reason donut and the three bar charts.
-
-Choose slices, legend items, or bars to filter the table in the browser. Multiple exit reasons or exit types match any selected value in that chart. Filters across charts must all match. The rehire and interview bars share their selections with the table dropdowns.
+`GET /attrition-events/summary` returns date-scoped chart counts and filtered table rows. The exit-date range sends `exit_date_from` and `exit_date_to` as inclusive ISO dates. Chart and dropdown selections also send a new request. Multiple reasons or types match any selected value within that category. Filters across categories must all match. The rehire and interview bars share their selections with the table dropdowns.
 
 ## Engagement Surveys
 
-`GET /engagement-surveys` loads the workbook responses. The bar chart compares average overall satisfaction across departments for the selected survey quarter. Six trend charts plot department averages for the other survey measures across all quarters on a one-to-five scale. Blank scores are excluded from averages.
-
-The Department and Employee ID pickers control the individual timeline. It shows the employee's seven measures through the selected quarter and leaves gaps for missing responses.
+`GET /engagement-surveys/options` provides available filters. The survey quarter, department, and employee selection call `GET /engagement-surveys/summary`. Python calculates the overall satisfaction averages for the selected quarter, the six department trends across all quarters, and the individual timeline through the selected quarter. Blank scores are excluded from averages. Department and employee selections scope the individual timeline.
 
 ## Performance Reviews
 
-`GET /performance-reviews` loads the quarterly review worksheet. Department and manager views show the score distributions and promotion readiness for the selected quarter or all quarters. Score distributions use the number of valid scored reviews as their denominator. Promotion readiness uses all reviews for the group. Across all quarters, one employee can contribute more than one review.
+`GET /performance-reviews/summary` receives the quarter and grouping, then computes the distributions and promotion readiness in Python. Score distributions use valid scored reviews as their denominator. Promotion readiness uses all reviews in the group. Across all quarters, one employee can contribute more than one review.
 
-Select an Employee ID to see that employee's performance ratings across the workbook review quarters. The summary uses the latest available review for promotion readiness and estimates the promotion month by subtracting the recorded promotion offset from the review month.
+Select an Employee ID to request that individual's history with `GET /performance-reviews?employee_id=...`. The summary uses the latest available review for promotion readiness and estimates the promotion month by subtracting the recorded promotion offset from the review month.
 
 ## Recruitment
 
-`GET /recruitment` loads the workbook's recruitment records. Choose a position in its department branch. Each worksheet row counts as one opening. Offers made sums the offer-count field, and acceptance counts use the outcome recorded for each opening.
+`GET /recruitment/options` supplies the department and position branches. Choosing a position sends both fields to `GET /recruitment/summary`, which returns its opening history and KPIs. Each worksheet row counts as one opening. Offers made sums the offer-count field, and acceptance counts use the outcome recorded for each opening.
 
 Average cost per hire and the two 90-day KPIs use hires with a value recorded for that measure. The workbook does not specify a currency, so the dashboard displays costs in the original workbook units. The opening history shows outcomes and values for individual recruitment records.
 
@@ -119,4 +121,4 @@ Start the dashboard and API with **Ctrl+Shift+B**, using the supplied `PA Task.x
 .\.venv\Scripts\python.exe -m pytest -q browser_checks.py
 ```
 
-The browser selects **Sales** in Employee Search and **January 12–22, 2025** in Attrition Events. It checks the query parameters on the actual HTTP requests and the updated results shown in the dashboard. To run in an existing Microsoft Edge installation, set `$env:DASHBOARD_TEST_BROWSER = "msedge"` before the test command.
+The browser exercises filters in Employee Search, Monthly Employee Data, Attrition Events, Engagement Surveys, Performance Reviews, and Recruitment. It checks the query parameters on the actual HTTP requests and the updated results shown in the dashboard. To run in an existing Microsoft Edge installation, set `$env:DASHBOARD_TEST_BROWSER = "msedge"` before the test command.

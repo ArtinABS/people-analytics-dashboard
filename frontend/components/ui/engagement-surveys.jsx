@@ -1,12 +1,13 @@
 "use client";
 
-import { Alert, Button, ComboBox, Input, Label, ListBox, Select, Skeleton, Typography } from "@heroui/react";
-import { useEffect, useId, useState } from "react";
-import { fetchEmployeeJson } from "../../app/employee-request";
+import { ComboBox, Input, Label, ListBox, Select, Typography } from "@heroui/react";
+import { useId, useState } from "react";
 import { quarterLabel } from "../../app/period-labels";
+import { useWorksheetQuery, worksheetPath } from "../../app/worksheet-query";
 import { Charts } from "./charts";
 import { CopyAnalysisKeys } from "./copy-analysis-keys";
 import { DepartmentTrends, SatisfactionBars } from "./survey-department-charts";
+import { WorksheetFeedback } from "./worksheet-feedback";
 
 const METRICS = [
   { key: "compensation_benefits", label: "Compensation & benefits" },
@@ -27,98 +28,42 @@ const ALL = "__all__";
 const SCORE_FORMAT = new Intl.NumberFormat("en", { maximumFractionDigits: 2 });
 const DATE_FORMAT = new Intl.DateTimeFormat("en", { dateStyle: "medium", timeZone: "UTC" });
 
-function groupBy(records, key) {
-  const groups = new Map();
-  for (const record of records) {
-    const value = record[key];
-    if (!groups.has(value)) groups.set(value, []);
-    groups.get(value).push(record);
-  }
-  return groups;
-}
-
-function average(records = [], key) {
-  const values = records.map((record) => record[key]).filter(Number.isFinite);
-  return values.length ? values.reduce((sum, value) => sum + value, 0) / values.length : null;
-}
-
 export function EngagementSurveys() {
-  const [result, setResult] = useState(null);
-  const [attempt, setAttempt] = useState(0);
-
-  useEffect(() => {
-    const controller = new AbortController();
-    fetchEmployeeJson("/engagement-surveys", controller.signal)
-      .then((surveys) => {
-        if (!controller.signal.aborted) setResult({ surveys });
-      })
-      .catch((error) => {
-        if (!controller.signal.aborted) setResult({ error: error.message });
-      });
-    return () => controller.abort();
-  }, [attempt]);
-
-  if (result === null) {
-    return (
-      <div className="loading-lines monthly-loading" role="status" aria-label="Loading engagement surveys">
-        <Skeleton /><Skeleton /><Skeleton />
-      </div>
-    );
-  }
-  if (result.error) {
-    return (
-      <Alert status="danger" className="search-alert">
-        <Alert.Indicator />
-        <Alert.Content>
-          <Alert.Description>Could not load engagement surveys. {result.error}</Alert.Description>
-          <Button size="sm" variant="secondary" onPress={() => {
-            setResult(null);
-            setAttempt((value) => value + 1);
-          }}>Retry</Button>
-        </Alert.Content>
-      </Alert>
-    );
-  }
-  if (!result.surveys.length) {
+  const options = useWorksheetQuery("/engagement-surveys/options");
+  if (!options.data) return <WorksheetFeedback request={options} subject="engagement survey filters" />;
+  if (!options.data.quarters.length) {
     return <Typography.Paragraph className="search-hint">The workbook has no engagement surveys.</Typography.Paragraph>;
   }
-  return <SurveyDashboard surveys={result.surveys} />;
+  return <SurveyDashboard {...options.data} />;
 }
 
-function SurveyDashboard({ surveys }) {
-  const quarters = [...new Set(surveys.map(({ survey_quarter }) => survey_quarter))].sort();
-  const departments = [...new Set(surveys.map(({ department }) => department))].sort();
+function SurveyDashboard({ quarters, departments }) {
   const [department, setDepartment] = useState(ALL);
   const [quarter, setQuarter] = useState(() => quarters.at(-1));
   const [employee, setEmployee] = useState();
 
-  const quarterIndex = quarters.indexOf(quarter);
-  const periods = quarters.slice(0, quarterIndex + 1);
-  const responses = surveys.filter(({ response_status }) => response_status === "Responded");
-  const responsesByDepartment = groupBy(responses, "department");
-  const departmentSeries = departments.map((name, index) => {
-    const byQuarter = groupBy(responsesByDepartment.get(name) ?? [], "survey_quarter");
-    const scores = Object.fromEntries([...METRICS, OVERALL].map(({ key }) => [
+  const summary = useWorksheetQuery(worksheetPath("/engagement-surveys/summary", {
+    survey_quarter: quarter,
+    department: department === ALL ? null : department,
+    employee_id: employee,
+    include_history: employee === null ? false : undefined,
+  }));
+  const departmentSeries = (summary.latest?.departments ?? []).map(({ name, trend, overall_satisfaction }, index) => {
+    const scores = Object.fromEntries(METRICS.map(({ key }) => [
       key,
-      quarters.map((period) => average(byQuarter.get(period), key)),
+      trend.map((period) => period[key]),
     ]));
-    return { name, scores, ...DEPARTMENT_SERIES[index % DEPARTMENT_SERIES.length] };
+    return { name, scores, overall_satisfaction, ...DEPARTMENT_SERIES[index % DEPARTMENT_SERIES.length] };
   });
-  const records = responses.filter((survey) =>
-    survey.survey_quarter <= quarter
-    && (department === ALL || survey.department === department)
-  );
-  const byEmployee = groupBy(records, "employee_id");
-  const ids = [...byEmployee.keys()].sort((a, b) => a - b);
-  const defaultEmployee = ids.find((id) => byEmployee.get(id).length === periods.length) ?? ids[0] ?? null;
-  const employeeId = employee === null || byEmployee.has(employee) ? employee : defaultEmployee;
-  const employeeRecords = byEmployee.get(employeeId) ?? [];
-  const employeeByQuarter = groupBy(employeeRecords, "survey_quarter");
+  const ids = summary.latest?.employee_ids ?? [];
+  const employeeId = employee === undefined ? summary.latest?.employee_id ?? null : employee;
+  const employeeRecords = summary.data?.employee_records ?? [];
+  const overallReady = summary.latest?.quarter === quarter;
 
   return (
     <div className="survey-dashboard">
       <div className="survey-department-overview">
-        <DepartmentTrends departments={departmentSeries} metrics={METRICS} quarters={quarters.map(quarterLabel)} />
+        {summary.latest && <DepartmentTrends departments={departmentSeries} metrics={METRICS} quarters={quarters.map(quarterLabel)} />}
         <section className="survey-overall-panel" aria-labelledby="survey-overall-heading">
           <div className="survey-section-header">
             <div className="survey-section-heading">
@@ -134,14 +79,14 @@ function SurveyDashboard({ surveys }) {
               />
             </div>
           </div>
-          <SatisfactionBars
+          {overallReady ? <SatisfactionBars
             quarter={quarterLabel(quarter)}
-            data={departmentSeries.map(({ name, color, scores }) => ({
+            data={departmentSeries.map(({ name, color, overall_satisfaction }) => ({
               name,
               color,
-              score: scores.overall_satisfaction[quarterIndex],
+              score: overall_satisfaction,
             }))}
-          />
+          /> : <WorksheetFeedback request={summary} subject="engagement survey results" />}
         </section>
       </div>
 
@@ -149,15 +94,20 @@ function SurveyDashboard({ surveys }) {
         <div className="survey-section-header">
           <div className="survey-section-heading">
             <Typography.Heading level={2} id="survey-timeline-heading">Employee timeline</Typography.Heading>
-            <Typography.Paragraph className="search-hint" role="status">
-              {employeeRecords.length === 1 ? "1 survey response" : `${employeeRecords.length} survey responses`} through {quarterLabel(quarter)}
-            </Typography.Paragraph>
+            {summary.data && (
+              <Typography.Paragraph className="search-hint" role="status">
+                {employeeRecords.length === 1 ? "1 survey response" : `${employeeRecords.length} survey responses`} through {quarterLabel(quarter)}
+              </Typography.Paragraph>
+            )}
           </div>
           <div className="survey-timeline-filters">
             <SurveySelect
               label="Department"
               value={department}
-              onChange={setDepartment}
+              onChange={(value) => {
+                setDepartment(value);
+                setEmployee(undefined);
+              }}
               options={[[ALL, "All departments"], ...departments.map((name) => [name, name])]}
             />
             <ComboBox
@@ -182,18 +132,18 @@ function SurveyDashboard({ surveys }) {
             </ComboBox>
           </div>
         </div>
-        {employeeRecords.length ? (
+        {!summary.data ? overallReady && <WorksheetFeedback request={summary} subject="employee survey timeline" /> : employeeRecords.length ? (
           <>
             <CopyAnalysisKeys rows={employeeRecords} dates={[["survey_date", "Survey date"]]} />
             <div className="survey-timeline-grid">
               {[...METRICS.slice(0, -1), OVERALL, METRICS.at(-1)].map((metric) => (
-                <SurveyTrend key={metric.key} metric={metric} periods={periods} records={employeeByQuarter} />
+                <SurveyTrend key={metric.key} metric={metric} timeline={summary.data.timeline} />
               ))}
             </div>
           </>
         ) : (
           <Typography.Paragraph className="search-hint">
-            {ids.length ? "Select an employee ID to see their scores." : "No survey responses match these filters."}
+            {employee === null && ids.length ? "Select an employee ID to see their scores." : "No survey responses match these filters."}
           </Typography.Paragraph>
         )}
       </section>
@@ -219,17 +169,12 @@ function SurveySelect({ label, value, options, onChange }) {
   );
 }
 
-function SurveyTrend({ metric, periods, records }) {
+function SurveyTrend({ metric, timeline }) {
   const titleId = useId();
   const color = metric.key === OVERALL.key ? "var(--accent)" : "var(--indigo)";
-  const data = periods.map((period) => {
-    const responses = records.get(period);
-    return {
-      quarter: quarterLabel(period),
-      date: responses?.[0].survey_date ?? null,
-      score: average(responses, metric.key),
-    };
-  });
+  const data = timeline.map(({ quarter, date, averages }) => ({
+    quarter: quarterLabel(quarter), date, score: averages[metric.key],
+  }));
   const formatSurvey = (quarter) => {
     const date = data.find((row) => row.quarter === quarter)?.date;
     return date ? `${quarter} (${DATE_FORMAT.format(new Date(`${date}T00:00:00Z`))})` : quarter;
@@ -248,7 +193,7 @@ function SurveyTrend({ metric, periods, records }) {
         series={[{ key: "score", label: metric.label, color }]}
         domain={[1, 5]}
         ticks={[1, 3, 5]}
-        showValues={periods.length <= 4}
+        showValues={timeline.length <= 4}
         formatTooltipLabel={formatSurvey}
       />
     </figure>

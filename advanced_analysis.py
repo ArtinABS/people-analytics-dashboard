@@ -55,6 +55,38 @@ class AnalysisRequest(BaseModel):
     keys: list[AnalysisKey] = Field(min_length=1)
 
 
+class AnalysisColumn(BaseModel):
+    id: str
+    label: str
+
+
+class AnalysisSource(BaseModel):
+    id: str
+    label: str
+    columns: list[AnalysisColumn]
+    date_columns: list[str]
+    default_columns: list[str]
+
+
+class AnalysisSources(BaseModel):
+    sources: list[AnalysisSource]
+
+
+class AnalysisMatch(BaseModel):
+    date: str | None
+    values: dict[str, str | int | float | bool | None]
+
+
+class AnalysisRow(BaseModel):
+    employee_id: int | None
+    date: str | None
+    matches: dict[str, list[AnalysisMatch]]
+
+
+class AnalysisResult(BaseModel):
+    rows: list[AnalysisRow]
+
+
 def worksheet_options(worksheets):
     return [
         {

@@ -26,6 +26,7 @@ export default function EmployeesDashboard() {
   const [worksheet, setWorksheet] = useState(null);
   const [analysisVisited, setAnalysisVisited] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
+  const [dataRevision, setDataRevision] = useState(0);
   const [devtoolsOpen, setDevtoolsOpen] = useState(false);
   const [employeeId, setEmployeeId] = useState(null);
   const [query, setQuery] = useState(null);
@@ -94,10 +95,17 @@ export default function EmployeesDashboard() {
     setAttempt((value) => value + 1);
   }
 
+  function onWorkbookImported() {
+    clearSearch();
+    setEmployeeId(null);
+    setDataRevision((revision) => revision + 1);
+  }
+
   return (
     <GlassyDashboard
       activeView={worksheet?.id ?? "overview"}
       openSearch={() => setSearchOpen(true)}
+      onWorkbookImported={onWorkbookImported}
       openDevTools={() => {
         setDevtoolsOpen(true);
         devtoolsTrigger.current?.focus({ preventScroll: true });
@@ -117,12 +125,12 @@ export default function EmployeesDashboard() {
         <Typography.Heading level={1} tabIndex={-1}>{worksheet?.label ?? "Overview"}</Typography.Heading>
       </header>
 
-      {WorksheetPanel ? <WorksheetPanel /> : worksheet && worksheet.id !== "advanced-analysis" && (
+      {WorksheetPanel ? <WorksheetPanel key={dataRevision} /> : worksheet && worksheet.id !== "advanced-analysis" && (
         <Card className="overview-panel">
           <Typography.Paragraph>This worksheet view is a placeholder.</Typography.Paragraph>
         </Card>
       )}
-      {analysisVisited && <div hidden={worksheet?.id !== "advanced-analysis"}><AdvancedAnalysis /></div>}
+      {analysisVisited && <div hidden={worksheet?.id !== "advanced-analysis"}><AdvancedAnalysis key={dataRevision} /></div>}
 
       <div hidden={worksheet !== null}>
         <Card className="overview-panel" aria-labelledby="overview-empty">
@@ -131,6 +139,7 @@ export default function EmployeesDashboard() {
         </Card>
 
         <EmployeeSearch
+          key={dataRevision}
           isOpen={worksheet === null && searchOpen}
           onOpenChange={setSearchOpen}
           onSearch={submitSearch}

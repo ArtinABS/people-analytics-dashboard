@@ -3,8 +3,13 @@ import sqlite3
 from contextlib import closing
 from datetime import date, datetime, timezone
 from pathlib import Path
+from typing import BinaryIO
+from xml.etree.ElementTree import ParseError
+from zipfile import BadZipFile
 
 from openpyxl import load_workbook
+from openpyxl.utils.exceptions import InvalidFileException
+from pydantic import ConfigDict, TypeAdapter
 
 
 PROJECT_DIR = Path(__file__).resolve().parent
@@ -44,47 +49,110 @@ RECRUITMENT_HEADERS = (
     "Quality of Hire 90d", "Manager Satisfaction 90d",
 )
 
+WORKBOOK_LAYOUT = {
+    SOURCE_SHEET: HEADERS,
+    MONTHLY_SHEET: MONTHLY_HEADERS,
+    ATTRITION_SHEET: ATTRITION_HEADERS,
+    ENGAGEMENT_SHEET: ENGAGEMENT_HEADERS,
+    PERFORMANCE_SHEET: PERFORMANCE_HEADERS,
+    RECRUITMENT_SHEET: RECRUITMENT_HEADERS,
+}
+INTEGER_CELL = TypeAdapter(int)
+NUMERIC_CELL = TypeAdapter(float, config=ConfigDict(allow_inf_nan=False))
+BOOLEAN_CELL = TypeAdapter(bool)
+INTEGER_HEADERS = {
+    "EmployeeID", "Tenure Months", "Months Since Last Promotion", "Days to Fill", "Offers Made",
+}
+BOOLEAN_HEADERS = {
+    "Eligible For Rehire", "Exit Interview Completed", "Promotion Ready", "Offer Accepted",
+}
+NUMERIC_HEADERS = {
+    "Performance Rating", "Engagement Score", "Skills Gap Score",
+    *ENGAGEMENT_HEADERS[5:-1], "Cost per Hire", "Quality of Hire 90d", "Manager Satisfaction 90d",
+}
 
-def read_sheet_rows(sheet, headers):
+
+class WorkbookFormatError(ValueError):
+    """The workbook cannot supply valid dashboard records."""
+
+
+def normalize_cell(header, value):
+    if isinstance(value, datetime):
+        value = value.date().isoformat()
+    if value is None:
+        return None
+    if header.endswith(" Date") or header in {"Date of Birth", "Month"}:
+        if header == "Month" and isinstance(value, str) and len(value) == 7:
+            value += "-01"
+        return date.fromisoformat(value).isoformat()
+    if header in INTEGER_HEADERS:
+        return INTEGER_CELL.validate_python(value)
+    if header in BOOLEAN_HEADERS:
+        return BOOLEAN_CELL.validate_python(value)
+    if header in NUMERIC_HEADERS:
+        return NUMERIC_CELL.validate_python(value)
+    return value
+
+
+def read_sheet_rows(sheet, headers, *, validate_cells=False):
     values = iter(sheet.values)
-    header_row = next(values)
+    header_row = next(values, ())
+    missing = [header for header in headers if header not in header_row]
+    if missing:
+        raise WorkbookFormatError(f"{sheet.title} is missing columns: {', '.join(missing)}.")
+    duplicates = [header for header in headers if header_row.count(header) > 1]
+    if validate_cells and duplicates:
+        raise WorkbookFormatError(f"{sheet.title} has duplicate columns: {', '.join(duplicates)}.")
     positions = [header_row.index(header) for header in headers]
-    for row in values:
+    for row_number, row in enumerate(values, start=2):
         if any(value is not None for value in row):
-            yield tuple(
-                value.date().isoformat() if isinstance(value, datetime) else value
-                for value in (row[index] for index in positions)
-            )
+            cells = []
+            for header, index in zip(headers, positions):
+                value = row[index] if index < len(row) else None
+                try:
+                    if validate_cells:
+                        value = normalize_cell(header, value)
+                    elif isinstance(value, datetime):
+                        value = value.date().isoformat()
+                except (TypeError, ValueError) as error:
+                    raise WorkbookFormatError(
+                        f"{sheet.title}, row {row_number}: {header} has an invalid value."
+                    ) from error
+                cells.append(value)
+            yield tuple(cells)
 
 
-def import_employees(workbook_path: Path, database_path: Path) -> int:
-    workbook = load_workbook(workbook_path, read_only=True, data_only=True)
+def import_employees(
+    workbook_path: Path | BinaryIO,
+    database_path: Path,
+    *,
+    workbook_name: str | None = None,
+    require_full_workbook: bool = False,
+) -> int:
     try:
-        employees = list(read_sheet_rows(workbook[SOURCE_SHEET], HEADERS))
-        monthly_rows = []
-        if MONTHLY_SHEET in workbook:
-            monthly_rows = [
-                (date.fromisoformat(month).isoformat()[:7], *fields)
-                for month, *fields in read_sheet_rows(workbook[MONTHLY_SHEET], MONTHLY_HEADERS)
-            ]
-        attrition_rows = (
-            list(read_sheet_rows(workbook[ATTRITION_SHEET], ATTRITION_HEADERS))
-            if ATTRITION_SHEET in workbook else []
-        )
-        survey_rows = (
-            list(read_sheet_rows(workbook[ENGAGEMENT_SHEET], ENGAGEMENT_HEADERS))
-            if ENGAGEMENT_SHEET in workbook else []
-        )
-        review_rows = (
-            list(read_sheet_rows(workbook[PERFORMANCE_SHEET], PERFORMANCE_HEADERS))
-            if PERFORMANCE_SHEET in workbook else []
-        )
-        recruitment_rows = (
-            list(read_sheet_rows(workbook[RECRUITMENT_SHEET], RECRUITMENT_HEADERS))
-            if RECRUITMENT_SHEET in workbook else []
-        )
-    finally:
-        workbook.close()
+        with closing(load_workbook(workbook_path, read_only=True, data_only=True, keep_links=False)) as workbook:
+            required = WORKBOOK_LAYOUT if require_full_workbook else (SOURCE_SHEET,)
+            missing = [sheet for sheet in required if sheet not in workbook]
+            if missing:
+                raise WorkbookFormatError(f"Missing worksheets: {', '.join(missing)}.")
+            rows = {
+                sheet: list(read_sheet_rows(workbook[sheet], headers, validate_cells=require_full_workbook))
+                for sheet, headers in WORKBOOK_LAYOUT.items() if sheet in workbook
+            }
+    except (BadZipFile, InvalidFileException, ParseError, KeyError) as error:
+        raise WorkbookFormatError("This file could not be read as an .xlsx workbook.") from error
+
+    employees = rows[SOURCE_SHEET]
+    monthly_rows = [
+        (date.fromisoformat(month).isoformat()[:7], *fields)
+        for month, *fields in rows.get(MONTHLY_SHEET, [])
+    ]
+    attrition_rows = rows.get(ATTRITION_SHEET, [])
+    survey_rows = rows.get(ENGAGEMENT_SHEET, [])
+    review_rows = rows.get(PERFORMANCE_SHEET, [])
+    recruitment_rows = rows.get(RECRUITMENT_SHEET, [])
+    if workbook_name is None:
+        workbook_name = workbook_path.name if isinstance(workbook_path, Path) else "Workbook.xlsx"
 
     with closing(sqlite3.connect(database_path)) as database, database:
         database.execute("BEGIN")
@@ -234,7 +302,7 @@ def import_employees(workbook_path: Path, database_path: Path) -> int:
         database.execute("""
             INSERT OR REPLACE INTO employee_import (id, workbook, sheet, imported_at, total)
             VALUES (1, ?, ?, ?, ?)
-        """, (workbook_path.name, SOURCE_SHEET, datetime.now(timezone.utc).isoformat(), len(employees)))
+        """, (workbook_name, SOURCE_SHEET, datetime.now(timezone.utc).isoformat(), len(employees)))
     return len(employees)
 
 

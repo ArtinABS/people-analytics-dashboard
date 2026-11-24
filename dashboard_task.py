@@ -10,6 +10,8 @@ from urllib.request import urlopen
 
 PROJECT_DIR = Path(__file__).resolve().parent
 FRONTEND_DIR = PROJECT_DIR / "frontend"
+DATABASE_PATH = PROJECT_DIR / "employees.sqlite3"
+WORKBOOK_PATH = PROJECT_DIR.parent / "Given Files" / "PA Task.xlsx"
 VENV_BIN = "Scripts/python.exe" if os.name == "nt" else "bin/python"
 VENV_PYTHON = PROJECT_DIR / ".venv" / VENV_BIN
 NPM = "npm.cmd" if os.name == "nt" else "npm"
@@ -47,7 +49,12 @@ def prepare_database():
         cwd=PROJECT_DIR,
         check=True,
     )
-    subprocess.run([VENV_PYTHON, "import_employees.py"], cwd=PROJECT_DIR, check=True)
+    if DATABASE_PATH.is_file():
+        print(f"Using the existing dashboard database at {DATABASE_PATH}.")
+    elif WORKBOOK_PATH.is_file():
+        subprocess.run([VENV_PYTHON, "import_employees.py"], cwd=PROJECT_DIR, check=True)
+    else:
+        print("Open the dashboard and choose Import Excel to load your first workbook.")
 
 
 def run_backend():
@@ -69,6 +76,12 @@ def run_backend():
             b'"/performance-reviews"',
             b'"/recruitment"',
             b'"/advanced-analysis"',
+            b'"/imports/workbook"',
+            b'"/monthly-employees/{employee_id}/selection"',
+            b'"/attrition-events/summary"',
+            b'"/engagement-surveys/summary"',
+            b'"/performance-reviews/summary"',
+            b'"/recruitment/summary"',
         ),
     ):
         return

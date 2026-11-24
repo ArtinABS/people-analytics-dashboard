@@ -3,6 +3,7 @@
 import { Alert, Button, ComboBox, Input, Label, ListBox, Select, Skeleton, Tabs, Typography } from "@heroui/react";
 import { useEffect, useState } from "react";
 import { fetchEmployeeJson } from "../../app/employee-request";
+import { useWorksheetQuery, worksheetPath } from "../../app/worksheet-query";
 import { formatMonth, formatPromotionMonth } from "../../app/period-labels";
 import { MonthlyGauge, MonthlyTrend, SCORE_METRICS } from "./monthly-score-figures";
 import { CopyAnalysisKeys } from "./copy-analysis-keys";
@@ -23,8 +24,9 @@ export function MonthlyEmployeeData() {
   const [employeeId, setEmployeeId] = useState(null);
   const [selectedMonths, setSelectedMonths] = useState([]);
   const [detailMonth, setDetailMonth] = useState(null);
-  const [history, setHistory] = useState(null);
-  const [historyAttempt, setHistoryAttempt] = useState(0);
+  const history = useWorksheetQuery(employeeId === null ? null : worksheetPath(
+    `${MONTHLY_URL}/${employeeId}/selection`, { month: selectedMonths },
+  ));
 
   useEffect(() => {
     const controller = new AbortController();
@@ -40,19 +42,6 @@ export function MonthlyEmployeeData() {
       });
     return () => controller.abort();
   }, [optionsAttempt]);
-
-  useEffect(() => {
-    if (employeeId === null) return;
-    const controller = new AbortController();
-    fetchEmployeeJson(`${MONTHLY_URL}/${employeeId}`, controller.signal)
-      .then((records) => {
-        if (!controller.signal.aborted) setHistory({ employeeId, records });
-      })
-      .catch((error) => {
-        if (!controller.signal.aborted) setHistory({ employeeId, error: error.message });
-      });
-    return () => controller.abort();
-  }, [employeeId, historyAttempt]);
 
   return (
     <Tabs className="monthly-views">
@@ -84,7 +73,6 @@ export function MonthlyEmployeeData() {
                 selectedKey={employeeId}
                 onSelectionChange={(id) => {
                   if (id !== employeeId) {
-                    setHistory(null);
                     setDetailMonth(null);
                   }
                   setEmployeeId(id);
@@ -137,26 +125,23 @@ export function MonthlyEmployeeData() {
             </div>
             {employeeId === null ? (
               <Typography.Paragraph className="monthly-status">Select an employee ID.</Typography.Paragraph>
-            ) : history?.employeeId !== employeeId ? (
+            ) : history.loading ? (
               <MonthlyLoading label="Loading monthly records" />
             ) : history.error ? (
               <MonthlyError
                 message={history.error}
-                onRetry={() => {
-                  setHistory(null);
-                  setHistoryAttempt((value) => value + 1);
-                }}
+                onRetry={history.retry}
               />
             ) : (
               <>
-                <EmployeeSummary record={history.records.at(-1)} />
+                <EmployeeSummary record={history.data.latest} />
                 {selectedMonths.length === 0 ? (
                   <Typography.Paragraph className="monthly-status">Select at least one month.</Typography.Paragraph>
                 ) : (
                   <EmployeeMonths
                     employeeId={employeeId}
                     months={selectedMonths}
-                    records={history.records}
+                    records={history.data.records}
                     detailMonth={detailMonth}
                     onSelectMonth={setDetailMonth}
                   />

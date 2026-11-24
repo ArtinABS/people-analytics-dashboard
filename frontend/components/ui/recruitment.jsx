@@ -1,10 +1,11 @@
 "use client";
 
-import { Alert, Button, Chip, Skeleton, Table, Typography } from "@heroui/react";
-import { useEffect, useState } from "react";
-import { fetchEmployeeJson } from "../../app/employee-request";
+import { Chip, Table, Typography } from "@heroui/react";
+import { useState } from "react";
+import { useWorksheetQuery, worksheetPath } from "../../app/worksheet-query";
 import { BranchedMenu } from "./branched-menu";
 import { CopyAnalysisKeys } from "./copy-analysis-keys";
+import { WorksheetFeedback } from "./worksheet-feedback";
 
 const NUMBER = new Intl.NumberFormat("en", { maximumFractionDigits: 2 });
 const RATING = new Intl.NumberFormat("en", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -14,34 +15,15 @@ const QUALITY_FIELDS = [
   { field: "manager_satisfaction_90d", label: "Manager satisfaction", column: "Manager satisfaction (90d)" },
 ];
 
-function departmentBranches(records) {
+function departmentBranches(options) {
   const departments = new Map();
-  for (const record of records) {
-    const { department, position } = record;
-    if (!departments.has(department)) departments.set(department, new Map());
-    const positions = departments.get(department);
-    if (!positions.has(position)) positions.set(position, []);
-    positions.get(position).push(record);
+  for (const { department, position } of options) {
+    if (!departments.has(department)) departments.set(department, []);
+    departments.get(department).push({
+      key: JSON.stringify([department, position]), label: position, department,
+    });
   }
-  return [...departments]
-    .sort(([left], [right]) => left.localeCompare(right))
-    .map(([department, positions]) => ({
-      key: department,
-      label: department,
-      children: [...positions]
-        .sort(([left], [right]) => left.localeCompare(right))
-        .map(([position, openings]) => ({
-          key: JSON.stringify([department, position]),
-          label: position,
-          department,
-          openings,
-        })),
-    }));
-}
-
-function summarize(openings, field) {
-  const values = openings.map((row) => row[field]).filter(Number.isFinite);
-  return { count: values.length, sum: values.reduce((total, value) => total + value, 0) };
+  return [...departments].map(([department, children]) => ({ key: department, label: department, children }));
 }
 
 function outcome(accepted) {
@@ -60,46 +42,12 @@ function OpeningDate({ date }) {
 }
 
 export function Recruitment() {
-  const [result, setResult] = useState(null);
-  const [attempt, setAttempt] = useState(0);
-
-  useEffect(() => {
-    const controller = new AbortController();
-    fetchEmployeeJson("/recruitment", controller.signal)
-      .then((openings) => {
-        if (!controller.signal.aborted) setResult({ openings });
-      })
-      .catch((error) => {
-        if (!controller.signal.aborted) setResult({ error: error.message });
-      });
-    return () => controller.abort();
-  }, [attempt]);
-
-  if (result === null) {
-    return (
-      <div className="loading-lines monthly-loading" role="status" aria-label="Loading recruitment records">
-        <Skeleton /><Skeleton /><Skeleton />
-      </div>
-    );
-  }
-  if (result.error) {
-    return (
-      <Alert status="danger" className="search-alert">
-        <Alert.Indicator />
-        <Alert.Content>
-          <Alert.Description>Could not load recruitment records. {result.error}</Alert.Description>
-          <Button size="sm" variant="secondary" onPress={() => {
-            setResult(null);
-            setAttempt((value) => value + 1);
-          }}>Retry</Button>
-        </Alert.Content>
-      </Alert>
-    );
-  }
-  if (!result.openings.length) {
+  const options = useWorksheetQuery("/recruitment/options");
+  if (!options.data) return <WorksheetFeedback request={options} subject="recruitment positions" />;
+  if (!options.data.length) {
     return <Typography.Paragraph className="search-hint">The workbook has no recruitment records.</Typography.Paragraph>;
   }
-  return <RecruitmentPositions branches={departmentBranches(result.openings)} />;
+  return <RecruitmentPositions branches={departmentBranches(options.data)} />;
 }
 
 function RecruitmentPositions({ branches }) {
@@ -125,21 +73,22 @@ function RecruitmentPositions({ branches }) {
   );
 }
 
-function PositionDetails({ position: { label, department, openings } }) {
-  const offers = summarize(openings, "offers_made");
-  const accepted = openings.filter(({ offer_accepted }) => offer_accepted === true).length;
-  const notAccepted = openings.filter(({ offer_accepted }) => offer_accepted === false).length;
-  const noOutcome = openings.length - accepted - notAccepted;
-  const hires = openings.filter(({ hire_date }) => hire_date !== null);
-  const cost = summarize(hires, "cost_per_hire");
+function PositionDetails({ position: { label, department } }) {
+  const request = useWorksheetQuery(worksheetPath("/recruitment/summary", { department, position: label }));
+  if (!request.data) return <WorksheetFeedback request={request} subject="recruitment results" />;
+  const summary = request.data;
+  const { openings, offers, accepted, not_accepted, unknown, hires, cost_per_hire } = summary;
+  if (!openings.length) {
+    return <Typography.Paragraph className="search-hint">No openings match this position.</Typography.Paragraph>;
+  }
   const overview = [
     ["Times opened", openings.length],
-    ["Offers made", offers.count ? NUMBER.format(offers.sum) : "—"],
+    ["Offers made", formatValue(offers)],
     ["Accepted openings", accepted],
-    ["Openings not accepted", notAccepted],
-    ["Average cost per hire", cost.count ? NUMBER.format(cost.sum / cost.count) : "—", "recruitment-cost"],
+    ["Openings not accepted", not_accepted],
+    ["Average cost per hire", formatValue(cost_per_hire.average), "recruitment-cost"],
   ];
-  if (noOutcome) overview.splice(4, 0, ["Outcome not recorded", noOutcome]);
+  if (unknown) overview.splice(4, 0, ["Outcome not recorded", unknown]);
 
   return (
     <section className="recruitment-detail" aria-labelledby="recruitment-position-heading">
@@ -158,12 +107,12 @@ function PositionDetails({ position: { label, department, openings } }) {
         <Typography.Heading level={3} id="recruitment-quality-heading">90-day hiring outcomes</Typography.Heading>
         <dl className="recruitment-quality-grid">
           {QUALITY_FIELDS.map(({ field, label }) => {
-            const { count, sum } = summarize(hires, field);
+            const { count, average } = summary[field];
             return (
               <div key={field}>
                 <dt>{label}</dt>
-                <dd>{count ? RATING.format(sum / count) : "—"}</dd>
-                <dd className="search-hint">{count} of {hires.length} hires with a recorded score</dd>
+                <dd>{formatValue(average, RATING)}</dd>
+                <dd className="search-hint">{count} of {hires} hires with a recorded score</dd>
               </div>
             );
           })}

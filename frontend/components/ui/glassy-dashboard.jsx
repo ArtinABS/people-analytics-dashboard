@@ -2,10 +2,11 @@
 
 import { Avatar, Button, Label, Link, SearchField, Surface, Switch, Tooltip } from "@heroui/react";
 import {
-  ArrowLeftToLine, ArrowRightFromLine, BookOpen, CalendarDays, ClipboardCheck,
+  ArrowLeftToLine, ArrowRightFromLine, CalendarDays, ClipboardCheck,
   CodeXml, LayoutDashboard, MessageSquareText, Moon, UserMinus, UserPlus, Users, Workflow,
 } from "lucide-react";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { WorkbookImport } from "./workbook-import";
 
 const THEME_KEY = "employees-dashboard-theme";
 const OVERVIEW = { id: "overview", label: "Overview", icon: LayoutDashboard };
@@ -17,7 +18,6 @@ export const WORKSHEET_VIEWS = [
   { id: "engagement-surveys", label: "Engagement Surveys", icon: MessageSquareText },
   { id: "performance-reviews", label: "Performance Reviews", icon: ClipboardCheck },
   { id: "recruitment", label: "Recruitment", icon: UserPlus },
-  { id: "data-dictionary", label: "Data Dictionary", icon: BookOpen },
   { id: "advanced-analysis", label: "Advanced Analysis", icon: Workflow },
 ];
 
@@ -39,7 +39,7 @@ function SidebarLink({ item: { id, label, icon: Icon }, activeView, expanded, on
   );
 }
 
-export function GlassyDashboard({ children, activeView, openSearch, openDevTools, devtoolsOpen, devtools }) {
+export function GlassyDashboard({ children, activeView, openSearch, onWorkbookImported, openDevTools, devtoolsOpen, devtools }) {
   const [theme, setTheme] = useState("light");
   const [expanded, setExpanded] = useState(true);
   const [worksheetSearch, setWorksheetSearch] = useState("");
@@ -92,8 +92,9 @@ export function GlassyDashboard({ children, activeView, openSearch, openDevTools
       <div className="shell" data-sidebar-expanded={expanded}>
         <Surface className="workspace-sidebar" render={(props) => <aside {...props} />}>
           <div className="workspace-brand">
-            <Avatar className="workspace-symbol" aria-hidden="true" size="sm">
-              <Avatar.Fallback>PA</Avatar.Fallback>
+            <Avatar className="workspace-symbol" size="sm">
+              <Avatar.Image src="/snappfood-logo.svg" alt="SnappFood" />
+              <Avatar.Fallback aria-label="SnappFood">SF</Avatar.Fallback>
             </Avatar>
             <span className="workspace-brand-name">People Analytics</span>
             <Button
@@ -145,6 +146,7 @@ export function GlassyDashboard({ children, activeView, openSearch, openDevTools
             <div className="sidebar-utilities">
               <nav aria-label="Dashboard tools">
                 <SidebarLink item={EMPLOYEE_SEARCH} expanded={expanded} onPress={openSearch} />
+                <WorkbookImport expanded={expanded} onImported={onWorkbookImported} />
                 <Tooltip isDisabled={expanded} delay={300}>
                   <Button
                     variant="ghost"

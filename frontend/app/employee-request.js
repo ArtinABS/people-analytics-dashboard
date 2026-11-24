@@ -18,9 +18,10 @@ function setRequests(nextRequests) {
   for (const listener of listeners) listener();
 }
 
-export async function fetchEmployeeJson(path, signal, json) {
+export async function fetchEmployeeJson(path, signal, payload) {
   const url = `${API_URL}${path}`;
-  const method = json === undefined ? "GET" : "POST";
+  const method = payload === undefined ? "GET" : "POST";
+  const isForm = payload instanceof FormData;
   const id = ++nextId;
   const started = performance.now();
   setRequests([
@@ -36,11 +37,17 @@ export async function fetchEmployeeJson(path, signal, json) {
       method,
       signal,
       cache: "no-store",
-      ...(json === undefined ? {} : { headers: { "Content-Type": "application/json" }, body: JSON.stringify(json) }),
+      ...(method === "POST" && {
+        body: isForm ? payload : JSON.stringify(payload),
+        headers: isForm ? undefined : { "Content-Type": "application/json" },
+      }),
     });
     if (!response.ok) {
       const body = await response.json().catch(() => null);
-      const detail = typeof body?.detail === "string" ? body.detail : null;
+      const validation = Array.isArray(body?.detail) ? body.detail[0] : null;
+      const detail = typeof body?.detail === "string"
+        ? body.detail
+        : validation?.msg && `${validation.loc?.slice(1).join(".") || "Invalid input"}: ${validation.msg}`;
       throw new Error(detail || `Request failed (HTTP ${response.status}).`);
     }
     return await response.json();

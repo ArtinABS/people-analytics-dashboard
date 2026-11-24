@@ -2,6 +2,7 @@ import json
 import sqlite3
 from contextlib import closing
 from datetime import date, datetime
+from io import BytesIO
 
 import pytest
 from fastapi.testclient import TestClient
@@ -11,7 +12,7 @@ from api import create_app
 from import_employees import (
     ATTRITION_HEADERS, ATTRITION_SHEET, ENGAGEMENT_HEADERS, ENGAGEMENT_SHEET,
     HEADERS, MONTHLY_HEADERS, MONTHLY_SHEET, PERFORMANCE_HEADERS, PERFORMANCE_SHEET, import_employees,
-    RECRUITMENT_HEADERS, RECRUITMENT_SHEET,
+    RECRUITMENT_HEADERS, RECRUITMENT_SHEET, WORKBOOK_LAYOUT,
 )
 
 
@@ -146,6 +147,85 @@ def test_failed_import_preserves_the_previous_database(tmp_path):
             assert after.json() == before.json()
 
 
+def upload_fixture(department="Sales"):
+    workbook = Workbook()
+    workbook.active.title = "Employees"
+    for name, headers in WORKBOOK_LAYOUT.items():
+        sheet = workbook.active if name == "Employees" else workbook.create_sheet(name)
+        sheet.append(headers)
+    workbook.active.append((1, department, "M01", date(2025, 1, 2), "A", "Full-time", "HQ", date(1993, 1, 1), 4))
+    workbook[ATTRITION_SHEET].append(("E01", 1, date(2025, 5, 12), "Voluntary", "Role Fit", True, False))
+    return workbook
+
+
+def post_workbook(client, workbook, filename="import.xlsx", origin="http://127.0.0.1:3000"):
+    with BytesIO() as content:
+        workbook.save(content)
+        return client.post(
+            "/imports/workbook", files={"file": (filename, content.getvalue())}, headers={"Origin": origin},
+        )
+
+
+def test_workbook_upload_replaces_data_and_reimport_stays_duplicate_free(tmp_path):
+    with TestClient(create_app(tmp_path / "employees.sqlite3")) as client, closing(upload_fixture()) as workbook:
+        for _ in range(2):
+            response = post_workbook(client, workbook)
+            assert response.status_code == 200
+            assert response.json() == {"workbook": "import.xlsx", "total": 1}
+            assert response.headers["access-control-allow-origin"] == "http://127.0.0.1:3000"
+            assert client.get("/employees", params={"department": "Sales"}).json()["total"] == 1
+            assert len(client.get("/attrition-events").json()) == 1
+
+        workbook.active["B2"] = "Technical"
+        workbook[ATTRITION_SHEET].delete_rows(2)
+        assert post_workbook(client, workbook, "updated.xlsx").status_code == 200
+        employees = client.get("/employees").json()
+        assert employees["total"] == 1
+        assert employees["departments"] == ["Technical"]
+        assert client.get("/attrition-events").json() == []
+        timeline = client.get("/employees", params={"trace": "true"}).text.splitlines()
+        assert json.loads(timeline[2])["import_info"]["workbook"] == "updated.xlsx"
+
+
+def test_workbook_upload_rejects_invalid_files_without_changing_current_data(tmp_path):
+    with TestClient(create_app(tmp_path / "employees.sqlite3")) as client:
+        with closing(upload_fixture()) as valid, closing(upload_fixture("Technical")) as invalid:
+            assert post_workbook(client, valid).status_code == 200
+            previous = client.get("/employees").json()
+            previous_exits = client.get("/attrition-events").json()
+
+            wrong_origin = post_workbook(client, invalid, origin="https://other.example")
+            assert wrong_origin.status_code == 403
+            wrong_extension = post_workbook(client, invalid, filename="import.csv")
+            assert wrong_extension.status_code == 400
+            corrupt = client.post("/imports/workbook", files={"file": ("broken.xlsx", b"not a workbook")})
+            assert corrupt.status_code == 422
+            assert "could not be read" in corrupt.json()["detail"]
+
+            invalid.active["D2"] = "not a date"
+            bad_date = post_workbook(client, invalid)
+            assert bad_date.status_code == 422
+            assert bad_date.json()["detail"] == "Employees, row 2: Hire Date has an invalid value."
+            invalid.active["D2"] = date(2025, 1, 2)
+
+            attrition = invalid[ATTRITION_SHEET]
+            attrition.append(next(attrition.iter_rows(min_row=2, max_row=2, values_only=True)))
+            assert post_workbook(client, invalid).status_code == 422
+            attrition.delete_rows(3)
+
+            invalid[MONTHLY_SHEET]["A1"] = "Unexpected column"
+            missing_column = post_workbook(client, invalid)
+            assert missing_column.status_code == 422
+            assert missing_column.json()["detail"] == "Monthly Employee Data is missing columns: Month."
+            invalid.remove(invalid[MONTHLY_SHEET])
+            missing_sheet = post_workbook(client, invalid)
+            assert missing_sheet.status_code == 422
+            assert missing_sheet.json()["detail"] == "Missing worksheets: Monthly Employee Data."
+
+        assert client.get("/employees").json() == previous
+        assert client.get("/attrition-events").json() == previous_exits
+
+
 def test_import_and_read_monthly_employee_records(tmp_path):
     workbook_path = tmp_path / "monthly.xlsx"
     database_path = tmp_path / "employees.sqlite3"
@@ -189,6 +269,11 @@ def test_import_and_read_monthly_employee_records(tmp_path):
         }
         assert client.get("/monthly-employees/999").json() == []
         assert client.get("/employees/1").json()["department"] == "Sales"
+        selected = client.get("/monthly-employees/1/selection", params=[("month", "2025-02"), ("month", "2025-01")])
+        assert selected.status_code == 200
+        assert selected.json() == {"latest": records[-1], "records": [records[0]]}
+        assert client.get("/monthly-employees/1/selection", params={"month": "2025-13"}).status_code == 422
+        assert client.get("/monthly-employees/999/selection").json() == {"latest": None, "records": []}
 
         workbook.remove(monthly)
         workbook.save(workbook_path)
@@ -206,7 +291,8 @@ def test_attrition_events_filter_inclusive_dates(tmp_path):
     attrition = workbook.create_sheet(ATTRITION_SHEET)
     attrition.append(ATTRITION_HEADERS)
     for index in range(1, 5):
-        attrition.append((f"EXIT-{index}", index, date(2025, 1, index), "Voluntary", "Role Fit", True, False))
+        reason = "Compensation" if index % 2 == 0 else "Role Fit"
+        attrition.append((f"EXIT-{index}", index, date(2025, 1, index), "Voluntary", reason, index > 2, False))
     workbook.save(workbook_path)
     workbook.close()
     import_employees(workbook_path, database_path)
@@ -226,6 +312,17 @@ def test_attrition_events_filter_inclusive_dates(tmp_path):
         assert client.get("/attrition-events", params={"exit_date_from": "invalid"}).status_code == 422
         reversed_dates = {"exit_date_from": "2025-01-03", "exit_date_to": "2025-01-02"}
         assert client.get("/attrition-events", params=reversed_dates).status_code == 422
+        summary = client.get("/attrition-events/summary", params={
+            "exit_date_from": "2025-01-02", "exit_reason": "Compensation", "eligible_for_rehire": False,
+        })
+        assert summary.status_code == 200
+        assert summary.json()["total"] == 3
+        assert summary.json()["reason_counts"] == {"Compensation": 2, "Role Fit": 1}
+        assert summary.json()["eligible_for_rehire"] == 2
+        assert [item["exit_id"] for item in summary.json()["records"]] == ["EXIT-2"]
+        assert client.get("/attrition-events/summary", params={"exit_type": "Involuntary"}).json()["records"] == []
+        assert client.get("/attrition-events/summary", params={"eligible_for_rehire": "unknown"}).status_code == 422
+        assert client.get("/attrition-events/summary", params=reversed_dates).status_code == 422
 
 
 def test_import_and_read_engagement_surveys(tmp_path):
@@ -264,6 +361,19 @@ def test_import_and_read_engagement_surveys(tmp_path):
             "recommend_to_friend": 4,
             "response_status": "Responded",
         }
+        assert client.get("/engagement-surveys/options").json() == {
+            "quarters": ["2025-Q1", "2025-Q2"], "departments": ["Sales"],
+        }
+        summary = client.get("/engagement-surveys/summary", params={"survey_quarter": "2025-Q1", "department": "Sales"})
+        assert summary.status_code == 200
+        data = summary.json()
+        assert data["employee_ids"] == [1]
+        assert data["departments"][0]["overall_satisfaction"] == 3
+        assert [point["overall_satisfaction"] for point in data["departments"][0]["trend"]] == [3, 3.6]
+        assert [record["survey_id"] for record in data["employee_records"]] == ["S1"]
+        assert data["timeline"][0]["averages"]["compensation_benefits"] is None
+        assert client.get("/engagement-surveys/summary", params={"department": "Marketing"}).json()["employee_records"] == []
+        assert client.get("/engagement-surveys/summary", params={"survey_quarter": "Q2"}).status_code == 422
 
 
 def test_import_and_read_performance_reviews(tmp_path):
@@ -300,6 +410,20 @@ def test_import_and_read_performance_reviews(tmp_path):
             "promotion_ready": True,
             "months_since_last_promotion": 4,
         }
+        assert client.get("/performance-reviews/options").json()["default_employee_id"] == 1
+        summary = client.get("/performance-reviews/summary", params={"review_quarter": "2025-Q2", "group_by": "manager_id"})
+        assert summary.status_code == 200
+        assert summary.json() == {
+            "total": 1,
+            "groups": [{
+                "group": "M01", "total": 1, "ready": 1, "not_ready": 0, "unknown": 0,
+                "distributions": {"performance_rating": [0, 0, 0, 1], "skills_gap_score": [0, 1, 0, 0]},
+            }],
+            "records": [reviews[1]],
+        }
+        assert client.get("/performance-reviews", params={"employee_id": 1}).json() == reviews
+        assert client.get("/performance-reviews", params={"employee_id": 999}).json() == []
+        assert client.get("/performance-reviews/summary", params={"group_by": "salary_grade"}).status_code == 422
 
 
 def test_import_and_read_recruitment_openings(tmp_path):
@@ -333,6 +457,18 @@ def test_import_and_read_recruitment_openings(tmp_path):
         assert openings[1]["cost_per_hire"] == 17000000
         assert openings[1]["quality_of_hire_90d"] == 4
         assert openings[1]["manager_satisfaction_90d"] == 4.25
+        assert client.get("/recruitment/options").json() == [{"department": "Finance", "position": "Analyst"}]
+        summary = client.get("/recruitment/summary", params={"department": "Finance", "position": "Analyst"})
+        assert summary.status_code == 200
+        assert summary.json() == {
+            "openings": openings,
+            "offers": 5, "accepted": 1, "not_accepted": 1, "unknown": 0, "hires": 1,
+            "cost_per_hire": {"count": 1, "average": 17000000},
+            "quality_of_hire_90d": {"count": 1, "average": 4},
+            "manager_satisfaction_90d": {"count": 1, "average": 4.25},
+        }
+        assert client.get("/recruitment/summary", params={"department": "Sales", "position": "Analyst"}).json()["openings"] == []
+        assert client.get("/recruitment/summary", params={"department": "Finance"}).status_code == 422
 
 
 def test_cross_worksheet_analysis_preserves_matches_and_keys(tmp_path):
