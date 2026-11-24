@@ -1,0 +1,4 @@
+[mcp_servers.heroui-react]
+command = "cmd.exe"
+args = ["/d", "/c", "npx.cmd", "-y", "@heroui/react-mcp@1.1.4"]
+startup_timeout_sec = 30

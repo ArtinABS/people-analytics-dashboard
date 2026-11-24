@@ -1,0 +1,65 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "Run Employees Dashboard",
+      "dependsOn": ["Dashboard: Database", "Dashboard: Start servers"],
+      "dependsOrder": "sequence",
+      "group": {
+        "kind": "build",
+        "isDefault": true
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "Dashboard: Database",
+      "type": "process",
+      "command": "python",
+      "args": ["-u", "dashboard_task.py", "database"],
+      "options": {
+        "cwd": "${workspaceFolder}/Interview Task/Employees Dashboard"
+      },
+      "presentation": {
+        "panel": "dedicated",
+        "group": "dashboard",
+        "close": false
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "Dashboard: Start servers",
+      "dependsOn": ["Dashboard: Backend", "Dashboard: Frontend"],
+      "dependsOrder": "parallel",
+      "problemMatcher": [],
+      "hide": true
+    },
+    {
+      "label": "Dashboard: Backend",
+      "type": "process",
+      "command": "python",
+      "args": ["-u", "dashboard_task.py", "backend"],
+      "options": {
+        "cwd": "${workspaceFolder}/Interview Task/Employees Dashboard"
+      },
+      "presentation": {
+        "panel": "dedicated",
+        "group": "dashboard"
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "Dashboard: Frontend",
+      "type": "process",
+      "command": "python",
+      "args": ["-u", "dashboard_task.py", "frontend"],
+      "options": {
+        "cwd": "${workspaceFolder}/Interview Task/Employees Dashboard"
+      },
+      "presentation": {
+        "panel": "dedicated",
+        "group": "dashboard"
+      },
+      "problemMatcher": []
+    }
+  ]
+}

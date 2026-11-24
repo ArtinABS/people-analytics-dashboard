@@ -1,0 +1,12 @@
+.venv/
+__pycache__/
+.pytest_cache/
+employees.sqlite3
+employees.sqlite3-*
+node_modules/
+.next/
+frontend/next-env.d.ts
+*.tsbuildinfo
+.env.local
+# heroui-agents-md
+.heroui-docs/

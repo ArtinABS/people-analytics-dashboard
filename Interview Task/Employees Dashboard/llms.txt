@@ -1,0 +1,17 @@
+# Employees Dashboard
+
+> A local People Analytics dashboard built with Next.js, React, and HeroUI v3. FastAPI serves the employee roster from SQLite.
+
+## Project context
+
+- [AGENTS.md](./AGENTS.md): Project instructions and HeroUI's generated React documentation index.
+- [DESIGN.md](./DESIGN.md): The dashboard's glass theme and HeroUI's default theme reference.
+- [README.md](./README.md): Setup, API flow, and tests.
+
+## HeroUI documentation
+
+- [Installed React documentation](./frontend/node_modules/@heroui/react/docs/llms.txt): Version-matched index available after installing frontend dependencies.
+- [React documentation index](https://heroui.com/react/llms.txt): Hosted index for the current HeroUI release.
+- [React components](https://heroui.com/react/llms-components.txt): Component anatomy, props, and examples.
+- [React patterns](https://heroui.com/react/llms-patterns.txt): Composition and styling examples.
+- [Theming with agents](https://heroui.com/en/docs/react/getting-started/theming-for-agents): Token, CSS layer, and theme customization guidance.
