@@ -11,10 +11,8 @@ from openpyxl import load_workbook
 from openpyxl.utils.exceptions import InvalidFileException
 from pydantic import ConfigDict, TypeAdapter
 
+from .paths import DEFAULT_DATABASE, DEFAULT_WORKBOOK
 
-PROJECT_DIR = Path(__file__).resolve().parent
-DEFAULT_WORKBOOK = PROJECT_DIR.parent / "Given Files" / "PA Task.xlsx"
-DEFAULT_DATABASE = PROJECT_DIR / "employees.sqlite3"
 SOURCE_SHEET = "Employees"
 HEADERS = (
     "EmployeeID", "Department", "Manager ID", "Hire Date", "Initial Salary Grade",

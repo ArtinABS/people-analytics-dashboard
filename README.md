@@ -2,6 +2,14 @@
 
 A local Next.js and FastAPI dashboard using the `Employees`, `Monthly Employee Data`, `Attrition Events`, `Engagement Surveys`, `Performance Reviews`, and `Recruitment` worksheets in `PA Task.xlsx`.
 
+## Project layout
+
+- `frontend/` contains the Next.js dashboard.
+- `backend/app/` contains FastAPI, the Excel importer, and the Python analytics.
+- `backend/data/` holds the local SQLite database.
+- `backend/tests/` contains the Python tests and optional browser checks.
+- `backend/dashboard_task.py` runs the commands used by the VS Code build task.
+
 ## Run it locally
 
 Use Python 3.11+ and Node.js 20.9+. Open this repository folder in VS Code and press **Ctrl+Shift+B**. The task opens three named terminals. To load the supplied `PA Task.xlsx` automatically on first start, put it in a `Given Files` folder beside this repo. You can also load it from the dashboard.
@@ -14,18 +22,18 @@ Open [the dashboard](http://127.0.0.1:3000) when both servers are ready. If a da
 
 ### Run manually
 
-From the `Employees Dashboard` folder, set up the Python environment, import the workbook, and start FastAPI in PowerShell.
+From the repository root, set up the Python environment in `backend/` and start FastAPI in PowerShell.
 
 ```powershell
+cd backend
 python -m venv .venv
 .\.venv\Scripts\python.exe -m pip install -r requirements.txt
-.\.venv\Scripts\python.exe import_employees.py
-.\.venv\Scripts\python.exe -m uvicorn api:app --host 127.0.0.1 --port 8000
+.\.venv\Scripts\python.exe -m uvicorn app.api:app --host 127.0.0.1 --port 8000
 ```
 
-The importer looks for `../Given Files/PA Task.xlsx` by default. Use `import_employees.py --workbook "C:/path/to/PA Task.xlsx"` with the virtual environment's Python to read a different copy.
+To import from the command line, run `.\.venv\Scripts\python.exe -m app.import_employees` from `backend/`. The importer looks for `Given Files/PA Task.xlsx` beside the repository and writes `backend/data/employees.sqlite3`. Pass `--workbook "C:/path/to/PA Task.xlsx"` to read a different file.
 
-In a second terminal, from the same project folder, start Next.js.
+In a second terminal, from the repository root, start Next.js.
 
 ```powershell
 cd frontend
@@ -43,7 +51,7 @@ The browser sends the workbook to `POST /imports/workbook` as a multipart form f
 
 ## Follow one request
 
-1. `import_employees.py` reads the workbook's `Employees` sheet with openpyxl. It saves the roster and latest import details in the same SQLite transaction. The supplied workbook has 360 records.
+1. `backend/app/import_employees.py` reads the workbook's `Employees` sheet with openpyxl. It saves the roster and latest import details in the same SQLite transaction. The supplied workbook has 360 records.
 2. Open **Search employees**, choose **Sales** under **Department**, and click **Search**. The dashboard sends `GET http://127.0.0.1:8000/employees?department=Sales`.
 3. FastAPI reads the matching SQLite rows and returns JSON with `total`, `departments`, and `employees`. The Sales filter returns 103 records.
 4. Open the floating **DevTools** panel from any worksheet. It shows the last 12 requests made during the current page session, including their URLs, HTTP statuses, and timings. On Overview, **Run search again** repeats the current search.
@@ -90,10 +98,10 @@ Date-only input expands to the matching employees. A month matches that calendar
 
 ## Reproduce the presentation calculations
 
-After importing the supplied workbook, run this command from the `Employees Dashboard` folder to print the 2025 results as JSON.
+After importing the supplied workbook, run this command from `backend/` to print the 2025 results as JSON.
 
 ```powershell
-.\.venv\Scripts\python.exe case_study.py
+.\.venv\Scripts\python.exe -m app.case_study
 ```
 
 - **Turnover.** Count exits by quarter. The rate for people hired before 2025 uses their monthly rows, including exit months, as the denominator.
@@ -103,7 +111,7 @@ After importing the supplied workbook, run this command from the `Employees Dash
 
 ## Run the automated tests
 
-Run from `Employees Dashboard` once the Python dependencies are installed.
+Run from `backend/` once the Python dependencies are installed.
 
 ```powershell
 .\.venv\Scripts\python.exe -m pytest -q
@@ -113,12 +121,12 @@ The standard suite checks the presentation calculations with small examples and 
 
 ### Verify the real dashboard connection
 
-Start the dashboard and API with **Ctrl+Shift+B**, using the supplied `PA Task.xlsx`. The optional browser suite runs against Next.js on port 3000 and the live FastAPI database on port 8000. Install Playwright and its Chromium browser once.
+Start the dashboard and API with **Ctrl+Shift+B**, using the supplied `PA Task.xlsx`. The optional browser suite runs against Next.js on port 3000 and the live FastAPI database on port 8000. From `backend/`, install Playwright and its Chromium browser once.
 
 ```powershell
 .\.venv\Scripts\python.exe -m pip install playwright==1.65.2
 .\.venv\Scripts\python.exe -m playwright install chromium
-.\.venv\Scripts\python.exe -m pytest -q browser_checks.py
+.\.venv\Scripts\python.exe -m pytest -q tests/browser_checks.py
 ```
 
 The browser exercises filters in Employee Search, Monthly Employee Data, Attrition Events, Engagement Surveys, Performance Reviews, and Recruitment. It checks the query parameters on the actual HTTP requests and the updated results shown in the dashboard. To run in an existing Microsoft Edge installation, set `$env:DASHBOARD_TEST_BROWSER = "msedge"` before the test command.

@@ -17,7 +17,7 @@
       "command": "python",
       "args": ["-u", "dashboard_task.py", "database"],
       "options": {
-        "cwd": "${workspaceFolder}"
+        "cwd": "${workspaceFolder}/backend"
       },
       "presentation": {
         "panel": "dedicated",
@@ -39,7 +39,7 @@
       "command": "python",
       "args": ["-u", "dashboard_task.py", "backend"],
       "options": {
-        "cwd": "${workspaceFolder}"
+        "cwd": "${workspaceFolder}/backend"
       },
       "presentation": {
         "panel": "dedicated",
@@ -53,7 +53,7 @@
       "command": "python",
       "args": ["-u", "dashboard_task.py", "frontend"],
       "options": {
-        "cwd": "${workspaceFolder}"
+        "cwd": "${workspaceFolder}/backend"
       },
       "presentation": {
         "panel": "dedicated",

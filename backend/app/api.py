@@ -12,9 +12,10 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field, StringConstraints, ValidationError, model_validator
 
-from advanced_analysis import AnalysisRequest, AnalysisResult, AnalysisSources, Worksheet, read_analysis, worksheet_options
-from dashboard_metrics import recruitment_summary, review_groups, survey_summary
-from import_employees import DEFAULT_DATABASE, WorkbookFormatError, import_employees
+from .advanced_analysis import AnalysisRequest, AnalysisResult, AnalysisSources, Worksheet, read_analysis, worksheet_options
+from .dashboard_metrics import recruitment_summary, review_groups, survey_summary
+from .import_employees import WorkbookFormatError, import_employees
+from .paths import DEFAULT_DATABASE
 
 DASHBOARD_ORIGINS = ["http://127.0.0.1:3000", "http://localhost:3000"]
 MAX_WORKBOOK_SIZE = 20 * 1024 * 1024

@@ -3,8 +3,9 @@ from datetime import date
 
 import pytest
 
-from case_study import before_exit, build_report, early_retention, review_trends, turnover
-from import_employees import DEFAULT_WORKBOOK, import_employees
+from app.case_study import before_exit, build_report, early_retention, review_trends, turnover
+from app.import_employees import import_employees
+from app.paths import DEFAULT_WORKBOOK
 
 
 def exit_event(key, date, reason="Career Development", exit_type="Voluntary"):

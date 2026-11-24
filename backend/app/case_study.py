@@ -10,7 +10,7 @@ from datetime import date, timedelta
 from pathlib import Path
 from statistics import fmean
 
-from import_employees import DEFAULT_DATABASE
+from .paths import DEFAULT_DATABASE
 
 START = date(2025, 1, 1)
 END = date(2025, 12, 31)

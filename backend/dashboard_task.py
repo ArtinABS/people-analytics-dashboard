@@ -4,16 +4,13 @@ import os
 import socket
 import subprocess
 import sys
-from pathlib import Path
 from urllib.request import urlopen
 
+from app.paths import BACKEND_DIR, DEFAULT_DATABASE, DEFAULT_WORKBOOK, REPO_DIR
 
-PROJECT_DIR = Path(__file__).resolve().parent
-FRONTEND_DIR = PROJECT_DIR / "frontend"
-DATABASE_PATH = PROJECT_DIR / "employees.sqlite3"
-WORKBOOK_PATH = PROJECT_DIR.parent / "Given Files" / "PA Task.xlsx"
+FRONTEND_DIR = REPO_DIR / "frontend"
 VENV_BIN = "Scripts/python.exe" if os.name == "nt" else "bin/python"
-VENV_PYTHON = PROJECT_DIR / ".venv" / VENV_BIN
+VENV_PYTHON = BACKEND_DIR / ".venv" / VENV_BIN
 NPM = "npm.cmd" if os.name == "nt" else "npm"
 
 
@@ -41,18 +38,18 @@ def reuse_server(name, port, check_path, markers, *, required_features=()):
 def prepare_database():
     if not VENV_PYTHON.is_file():
         print("Creating the dashboard's Python environment.")
-        subprocess.run([sys.executable, "-m", "venv", ".venv"], cwd=PROJECT_DIR, check=True)
+        subprocess.run([sys.executable, "-m", "venv", ".venv"], cwd=BACKEND_DIR, check=True)
 
     print("Checking Python dependencies.")
     subprocess.run(
         [VENV_PYTHON, "-m", "pip", "install", "--quiet", "--disable-pip-version-check", "-r", "requirements.txt"],
-        cwd=PROJECT_DIR,
+        cwd=BACKEND_DIR,
         check=True,
     )
-    if DATABASE_PATH.is_file():
-        print(f"Using the existing dashboard database at {DATABASE_PATH}.")
-    elif WORKBOOK_PATH.is_file():
-        subprocess.run([VENV_PYTHON, "import_employees.py"], cwd=PROJECT_DIR, check=True)
+    if DEFAULT_DATABASE.is_file():
+        print(f"Using the existing dashboard database at {DEFAULT_DATABASE}.")
+    elif DEFAULT_WORKBOOK.is_file():
+        subprocess.run([VENV_PYTHON, "-m", "app.import_employees"], cwd=BACKEND_DIR, check=True)
     else:
         print("Open the dashboard and choose Import Excel to load your first workbook.")
 
@@ -86,8 +83,8 @@ def run_backend():
     ):
         return
     subprocess.run(
-        [VENV_PYTHON, "-m", "uvicorn", "api:app", "--host", "127.0.0.1", "--port", "8000"],
-        cwd=PROJECT_DIR,
+        [VENV_PYTHON, "-m", "uvicorn", "app.api:app", "--host", "127.0.0.1", "--port", "8000"],
+        cwd=BACKEND_DIR,
         check=True,
     )
 
