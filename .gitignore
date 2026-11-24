@@ -1,3 +1,14 @@
-/.venv/
-/Interview Task/Given Files/
-/Interview Task/People Analytics - 2025 FA.pdf
+.venv/
+__pycache__/
+.pytest_cache/
+employees.sqlite3
+employees.sqlite3-*
+node_modules/
+.next/
+frontend/next-env.d.ts
+*.tsbuildinfo
+.env.local
+/.agents/
+/.codex/
+# heroui-agents-md
+.heroui-docs/

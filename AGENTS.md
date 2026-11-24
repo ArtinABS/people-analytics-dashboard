@@ -10,8 +10,8 @@
 ## HeroUI resources
 
 - Use [the installed React docs index](./frontend/node_modules/@heroui/react/docs/llms.txt) for the version in `frontend/package.json`. Consult the component or guide it points to.
-- Use the [React skill](./.agents/skills/heroui-react/SKILL.md) for component work and the [theming skill](./.agents/skills/heroui-theming/SKILL.md) for styling. Run their utility scripts from `frontend/` so they resolve the installed HeroUI packages.
-- The [project LLM index](./llms.txt) links to hosted HeroUI references. The HeroUI MCP server is configured for this project in [`.codex/config.toml`](./.codex/config.toml).
+- If installed locally, use the HeroUI React and theming skills in `.agents/skills/`. Run their utility scripts from `frontend/` so they resolve the installed HeroUI packages.
+- The [project LLM index](./llms.txt) links to hosted HeroUI references. Local HeroUI MCP configuration can live in `.codex/config.toml`.
 - The generated index below points to the optional local documentation snapshot. From the dashboard root, refresh it with `npx.cmd -y heroui-cli@3.2.0 agents-md --react --output AGENTS.md`.
 
 See [README.md](./README.md) for setup and testing.
